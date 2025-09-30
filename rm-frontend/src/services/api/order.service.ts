@@ -1,7 +1,7 @@
 import apiClient from './config';
 import { 
-  Order, 
-  CreateOrderRequest, 
+  Order,
+  CreateOrderRequest,
   FrontendOrderRequest,
   CreateOrderResponse,
   KitchenOrder,
@@ -19,7 +19,7 @@ class OrderService {
     await apiClient.post(`/captain/bills/${billId}/reorder/`, { order_items: items });
   }
 
-  // Frontend/Customer APIs
+  // Frontend/Customer APIs - Updated to match API doc
   async createCustomerOrder(
     restaurantSlug: string, 
     data: FrontendOrderRequest
@@ -31,28 +31,29 @@ class OrderService {
     return response.data;
   }
 
-  // --- NEW FUNCTION ADDED HERE ---
+  // Updated to match API doc endpoint and return type
   /**
    * Adds a list of new items to an existing, pending order.
    * @param orderId The ID of the existing bill/order.
    * @param items The array of new items to add.
-   * @returns The full, updated order object from the server.
+   * @returns The complete, updated order object from the server.
    */
-  async addItemsToOrder(orderId: number, items: any[]): Promise<any> {
-    // This calls the new backend endpoint: /api/orders/{bill_id}/add_items/
-    const response = await apiClient.post(`/orders/${orderId}/add_items/`, { items });
-    return response;
+  async addItemsToOrder(orderId: number, items: any[]): Promise<KitchenOrder> {
+    // Updated endpoint to match API doc: /api/orders/{bill_id}/add_items/
+    const response = await apiClient.post<KitchenOrder>(`/orders/${orderId}/add_items/`, { items });
+    return response.data;
   }
-  // --- END OF NEW FUNCTION ---
 
-  // Chef APIs
+  // Chef APIs - Updated to match API doc
   async getKitchenOrders(): Promise<KitchenOrder[]> {
     const response = await apiClient.get<KitchenOrder[]>('/kitchen/orders/');
     return response.data;
   }
 
-  async updateOrderItemStatus(itemId: number, status: OrderStatus): Promise<void> {
-    await apiClient.post(`/order-items/${itemId}/update-status/`, { status });
+  // Updated to match API doc response format
+  async updateOrderItemStatus(itemId: number, status: OrderStatus): Promise<{ message: string }> {
+    const response = await apiClient.post<{ message: string }>(`/order-items/${itemId}/update-status/`, { status });
+    return response.data;
   }
 
   // Restaurant Admin APIs
@@ -65,6 +66,11 @@ class OrderService {
     const response = await apiClient.get<Order[]>(
       `/restaurant/reports/orders/?period=${period}`
     );
+    return response.data;
+  }
+  
+  async getOrderDetails(orderId: number): Promise<KitchenOrder> {
+    const response = await apiClient.get<KitchenOrder>(`/orders/${orderId}/`);
     return response.data;
   }
 }

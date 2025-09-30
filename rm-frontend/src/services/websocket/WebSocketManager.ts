@@ -1,7 +1,5 @@
-// src/services/websocket/WebSocketManager.ts
-import { WebSocketMessage, OrderStatusUpdate, CashierNotification } from '@/types/websocket.types';
 import { UserRole } from '@/types/auth.types';
-
+  
 type WebSocketCallback = (data: any) => void;
 
 class WebSocketManager {
@@ -12,16 +10,17 @@ class WebSocketManager {
   private reconnectTimeout: NodeJS.Timeout | null = null;
   private currentConfig: {
     role: UserRole;
-    restaurantSlug: string;
-    tableNumber?: string;
+    restaurantSlug?: string;
+    billId?: number; // Changed from tableNumber
   } | null = null;
 
-  connect(role: UserRole, restaurantSlug: string, tableNumber?: string): void {
+  // Updated the parameter to accept billId
+  connect(role: UserRole, restaurantSlug?: string, billId?: number): void {
     const WS_BASE_URL = import.meta.env.VITE_WS_URL || 'ws://localhost:8000/ws';
     let wsUrl: string;
 
     // Store config for reconnection
-    this.currentConfig = { role, restaurantSlug, tableNumber };
+    this.currentConfig = { role, restaurantSlug, billId };
 
     switch (role) {
       case 'CHEF':
@@ -30,16 +29,22 @@ class WebSocketManager {
       case 'CASHIER':
         wsUrl = `${WS_BASE_URL}/cashier/${restaurantSlug}/`;
         break;
-      default:
-        if (tableNumber) {
-          wsUrl = `${WS_BASE_URL}/customer/${tableNumber}/${restaurantSlug}/`;
+      case 'CUSTOMER': // Explicitly handle CUSTOMER role
+        if (billId) {
+          // --- THIS IS THE FIX ---
+          // The URL now correctly uses bill_id, matching your backend routing
+          wsUrl = `${WS_BASE_URL}/customer/${billId}/`;
         } else {
-          console.error('Table number required for customer WebSocket');
+          console.error('Bill ID is required for customer WebSocket');
           return;
         }
+        break;
+      default:
+        console.error('Invalid role for WebSocket connection');
+        return;
     }
 
-    this.disconnect(); // Close existing connection if any
+    this.disconnect(); // Ensure any old connection is closed
     this.socket = new WebSocket(wsUrl);
     this.setupEventHandlers();
   }
@@ -48,36 +53,46 @@ class WebSocketManager {
     if (!this.socket) return;
 
     this.socket.onopen = () => {
-      console.log('WebSocket connected');
+      console.log('✅ WebSocket connected to:', this.socket?.url);
       this.reconnectAttempts = 0;
     };
 
     this.socket.onmessage = (event: MessageEvent) => {
       try {
         const data = JSON.parse(event.data);
+        console.log('📨 WebSocket raw message received:', data); // 🔥 ADD: Debug logging
         this.notifyListeners(data);
       } catch (error) {
-        console.error('Failed to parse WebSocket message:', error);
+        console.error('❌ Failed to parse WebSocket message:', error, 'Raw:', event.data);
       }
     };
 
     this.socket.onerror = (error: Event) => {
-      console.error('WebSocket error:', error);
+      console.error('❌ WebSocket error:', error);
     };
 
-    this.socket.onclose = () => {
-      console.log('WebSocket disconnected');
+    this.socket.onclose = (event: CloseEvent) => {
+      console.log('🔌 WebSocket disconnected. Code:', event.code, 'Reason:', event.reason);
       this.attemptReconnect();
     };
   }
 
-  private attemptReconnect(): void {
-    if (this.reconnectAttempts >= this.maxReconnectAttempts) {
-      console.error('Max reconnection attempts reached');
-      return;
-    }
+  // private notifyListeners(data: any): void {
+  //   console.log('📢 Notifying', this.listeners.size, 'WebSocket listeners with data:', data);
+  //   this.listeners.forEach((callback, key) => {
+  //     try {
+  //       console.log('📤 Calling listener:', key);
+  //       callback(data);
+  //     } catch (error) {
+  //       console.error('❌ Error in WebSocket listener', key, ':', error);
+  //     }
+  //   });
+  // }
 
-    if (!this.currentConfig) return;
+  private attemptReconnect(): void {
+    if (this.reconnectAttempts >= this.maxReconnectAttempts || !this.currentConfig) {
+        return;
+    }
 
     this.reconnectAttempts++;
     const delay = Math.min(1000 * Math.pow(2, this.reconnectAttempts), 30000);
@@ -85,8 +100,8 @@ class WebSocketManager {
     console.log(`Attempting to reconnect (${this.reconnectAttempts}/${this.maxReconnectAttempts}) in ${delay}ms...`);
     
     this.reconnectTimeout = setTimeout(() => {
-      const { role, restaurantSlug, tableNumber } = this.currentConfig!;
-      this.connect(role, restaurantSlug, tableNumber);
+      const { role, restaurantSlug, billId } = this.currentConfig!;
+      this.connect(role, restaurantSlug, billId);
     }, delay);
   }
 
@@ -123,6 +138,8 @@ class WebSocketManager {
     }
     
     if (this.socket) {
+      // Remove event listeners before closing to prevent reconnect attempts on manual disconnect
+      this.socket.onclose = null; 
       this.socket.close();
       this.socket = null;
     }

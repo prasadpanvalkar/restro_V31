@@ -1,55 +1,98 @@
 // src/hooks/useWebSocket.ts
-import { useEffect, useCallback } from 'react';
+import { useEffect, useCallback, useRef } from 'react';
 import WebSocketManager from '@/services/websocket/WebSocketManager';
 import { UserRole } from '@/types/auth.types';
 
 interface UseWebSocketOptions {
-  role?: UserRole;
-  restaurantSlug?: string;
-  tableNumber?: string;
+  role: UserRole | 'CUSTOMER';
+  restaurantSlug: string;
+  billId?: number; // Keep this
   onMessage?: (data: any) => void;
-  // A flag to explicitly enable/disable the connection
-  enabled?: boolean; 
+  onConnect?: () => void;
+  onDisconnect?: () => void;
+  onError?: (error: any) => void;
+  enabled?: boolean;
 }
 
 export const useWebSocket = ({
   role,
   restaurantSlug,
-  tableNumber,
+  billId, // FIXED: Use billId instead of tableNumber
   onMessage,
-  enabled = true, // Default to enabled
+  onConnect,
+  onDisconnect,
+  onError,
+  enabled = true,
 }: UseWebSocketOptions) => {
+  const callbacksRef = useRef({ onMessage, onConnect, onDisconnect, onError });
+  const connectionRef = useRef<{ role: string; slug: string; billId?: number } | null>(null);
+
   useEffect(() => {
-    // --- START OF FIX ---
-    // Guard Clause: Prevents the hook from trying to connect
-    // until all necessary information is available and it's enabled.
-    if (!enabled || !role || !restaurantSlug) {
-      return; // Don't connect if not enabled or basic info is missing
-    }
-    if (role === 'CUSTOMER' && !tableNumber) {
-      return; // Don't connect if role is customer but table number is missing
-    }
-    // --- END OF FIX ---
+    callbacksRef.current = { onMessage, onConnect, onDisconnect, onError };
+  }, [onMessage, onConnect, onDisconnect, onError]);
 
-    WebSocketManager.connect(role, restaurantSlug, tableNumber);
-
-    if (onMessage) {
-      WebSocketManager.addListener('hook-listener', onMessage);
+  useEffect(() => {
+    if (!enabled || !restaurantSlug) {
+      console.log('WebSocket disabled or missing restaurantSlug');
+      return;
     }
 
-    // The cleanup function runs when the component unmounts
-    // or when the dependencies change, ensuring a clean disconnect.
-    return () => {
+    const connectionKey = `${role}-${restaurantSlug}-${billId || ''}`;
+    const currentConnection = connectionRef.current;
+    const currentConnectionKey = currentConnection 
+      ? `${currentConnection.role}-${currentConnection.slug}-${currentConnection.billId || ''}`
+      : null;
+
+    if (currentConnectionKey !== connectionKey) {
+      console.log('WebSocket connection details changed, reconnecting...');
+      
       WebSocketManager.removeListener('hook-listener');
       WebSocketManager.disconnect();
+      
+      connectionRef.current = { role, slug: restaurantSlug, billId };
+      
+      // FIXED: Use billId instead of undefined tableNumber
+      WebSocketManager.connect(role as UserRole, restaurantSlug, billId);
+      
+      WebSocketManager.addListener('hook-listener', (data: any) => {
+        console.log('WebSocket message received in hook:', data);
+        const currentCallbacks = callbacksRef.current;
+        if (currentCallbacks.onMessage) {
+          try {
+            currentCallbacks.onMessage(data);
+          } catch (error) {
+            console.error('Error in WebSocket onMessage callback:', error);
+          }
+        }
+      });
+      
+      if (callbacksRef.current.onConnect) {
+        callbacksRef.current.onConnect();
+      }
+    }
+
+    return () => {
+      console.log('WebSocket hook cleanup');
+      WebSocketManager.removeListener('hook-listener');
     };
-  }, [role, restaurantSlug, tableNumber, onMessage, enabled]); // Add dependencies
+  }, [role, restaurantSlug, billId, enabled]); // FIXED: Use billId in dependencies
+
+  useEffect(() => {
+    return () => {
+      console.log('WebSocket hook unmounting - full cleanup');
+      WebSocketManager.removeListener('hook-listener');
+      WebSocketManager.disconnect();
+      connectionRef.current = null;
+    };
+  }, []);
 
   const sendMessage = useCallback((data: any) => {
     WebSocketManager.send(data);
   }, []);
 
-  const isConnected = WebSocketManager.isConnected();
-
-  return { sendMessage, isConnected };
+  return { 
+    sendMessage, 
+    isConnected: WebSocketManager.isConnected(),
+    connectionStatus: WebSocketManager.isConnected() ? 'connected' : 'disconnected'
+  };
 };
